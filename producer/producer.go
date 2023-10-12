@@ -5,9 +5,12 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"time"
+	"flag"
+    "encoding/json"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
+	//"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 
@@ -22,17 +25,23 @@ var (
 type AWSKinesis struct {
 	stream          string
 	region          string
-	endpoint        string
 	accessKeyID     string
 	secretAccessKey string
-	sessionToken    string
+	partitionKey	string
+}
+
+type User struct {
+	Id 			string	`json:"id,omitempty"`
+	Name		string	`json:"name,omitempty"`
+	Age			int		`json:"age,omitempty"`
+	Birthdate	time.Time 	`json:"birthdate,omitempty"`
 }
 
 // initiate configuration
 func init() {
-	e := godotenv.Load() //Load .env file
-	if e != nil {
-		fmt.Print(e)
+	err := godotenv.Load() //Load .env file
+	if err != nil {
+		log.Panic(err)
 	}
 	producer = AWSKinesis{
 		stream:          os.Getenv("KINESIS_STREAM_NAME"),
@@ -43,49 +52,64 @@ func init() {
 }
 
 func main() {
+	//load the flags (in case it was been provider)
+	strKey := flag.String("k", "key1", "partitionKey")
+	flag.Parse()
+
 	// connect to aws-kinesis
 	s := session.New(&aws.Config{
 		Region:      aws.String(producer.region),
-		Credentials: credentials.NewStaticCredentials(producer.accessKeyID, producer.secretAccessKey,""),
+		//Credentials: credentials.NewStaticCredentials(producer.accessKeyID, producer.secretAccessKey,""),
 	})
 
 	kc := kinesis.New(s)
 	streamName := aws.String(producer.stream)
 	_, err := kc.DescribeStream(&kinesis.DescribeStreamInput{StreamName: streamName})
-
-	//if no stream name in AWS
 	if err != nil {
 		log.Panic(err)
 	}
 
 	// prepare data that will be sent. We use data.json file as example data
-	data := openFile()
+	//data := openFile()
+	data := mockData()
+	fmt.Println(data)
 
 	// put data to stream
+	fmt.Printf("StreamName: %v\n", producer.stream)
+
 	putOutput, err := kc.PutRecord(&kinesis.PutRecordInput{
 		Data:         []byte(data),
 		StreamName:   streamName,
-		PartitionKey: aws.String("key1"),
+		PartitionKey: aws.String(*strKey),
 	})
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
-	fmt.Printf("%v\n", *putOutput)
+
+	fmt.Printf("sucess put record: %v\n", *putOutput)
 }
 
-// used to open file json
 func openFile() string {
-	// Open our jsonFile
-	jsonFile, err := os.Open("data_kinesis.json")
-	// if we os.Open returns an error then handle it
+	jsonFile, err := os.Open("./msg/data_example1.json")
 	if err != nil {
 		fmt.Println(err)
 	}
 	fmt.Println("Successfully Opened data.json")
-	// defer the closing of our jsonFile so that we can parse it later on
+
 	defer jsonFile.Close()
 
 	byteValue, _ := ioutil.ReadAll(jsonFile)
 
 	return string(byteValue)
+}
+
+func mockData() string {
+	user := User{Id: producer.partitionKey, Name:"Eliezer Junior", Age: 40, Birthdate: time.Now()}
+	
+	fmt.Println(user)
+	res, err := json.Marshal(user)
+    if err != nil {
+        return "err"
+    }
+	return string(res)
 }
